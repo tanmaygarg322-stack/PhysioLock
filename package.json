@@ -1,0 +1,25 @@
+{
+  "name": "physiolock",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start --go",
+    "android": "expo start --android --go",
+    "ios": "expo start --ios --go",
+    "check": "expo install --check",
+    "test": "node --test questionnaire.test.mjs plan-engine.test.mjs server/service.test.mjs server/demo.test.mjs server/rehabmypatient.test.mjs reset-demo.test.mjs catalog.test.mjs exercise-schedule.test.mjs calendar-model.test.mjs plan-cache.test.mjs checkin-profile.test.mjs progress-model.test.mjs notifications-model.test.mjs server/chat-policy.test.mjs rewards-model.test.mjs",
+    "plan-server": "node server/index.mjs",
+    "demo-server": "node server/dev-demo.mjs"
+  },
+  "dependencies": {
+    "expo": "~58.0.19",
+    "expo-secure-store": "~58.0.2",
+    "expo-speech": "~58.0.3",
+    "expo-status-bar": "~58.0.4",
+    "react": "19.3.0",
+    "react-native": "0.88.0",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-svg": "15.16.0"
+  }
+}

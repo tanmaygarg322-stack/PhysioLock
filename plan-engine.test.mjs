@@ -1,0 +1,33 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {profileFrom} from './questionnaire.mjs';
+import {assemblePlan,draftEligible,interpretProfile,missingFollowups,safetyState,verifyRecord} from './plan-engine.mjs';
+import {authorizedMedia} from './activity-sources.mjs';
+const base=()=>({...profileFrom({type:'Physical therapy',age:'30–44',ptGoals:['Move around my home'],ptActivities:['Walking'],ptSupport:['Walker'],hasPlan:'Not yet',days:['Monday','Wednesday','Friday'],'hour-Monday':'5 AM','hour-Wednesday':'12 PM','hour-Friday':'9 PM'}),followups:{reason:'My therapist referred me',restrictions:'None reported by my care team',discomfort:'None reported',clearance:'Yes',supervision:'Independent practice permitted',concerns:'None reported',sessionLength:'10 minutes'}});
+const record=()=>({id:'fixture-1',patientSubject:'patient-a',name:'TEST FIXTURE ONLY',therapyType:'Physical therapy',source:{name:'Wibbi',identifier:'test-only-id',authorized:true,verified:true},goal:'Move around my home',equipment:['Walker'],instructions:'TEST: preserve this exact text.',dosage:'TEST clinician dosage',frequency:'TEST clinician frequency',supervision:'Independent practice permitted',precautions:['TEST clinician precaution'],approval:{status:'approved',clinicianId:'test-clinician',approvedAt:'2026-01-01T00:00:00Z'},media:[]});
+test('daily durations stay separate and skip the repeated session-length question',()=>{
+ const p=base();delete p.followups.sessionLength;
+ p.answers['duration-Monday']='5 minutes';p.answers['duration-Wednesday']='15 minutes';p.answers['duration-Friday']='20 minutes';
+ const plan=assemblePlan(p,{records:[record()]});
+ assert.deepEqual(plan.schedule.map(item=>item.durationMinutes),[5,15,20]);
+ assert(!missingFollowups(p).some(q=>q.id==='sessionLength'));
+ assert(!missingFollowups(p,true).some(q=>q.id==='sessionLength'));
+ assert.equal(plan.routine[0].dosage,'TEST clinician dosage');
+ delete p.answers['duration-Friday'];assert(missingFollowups(p).some(q=>q.id==='sessionLength'));
+});
+test('profile preserves answers and missing values without diagnoses',()=>{const p=interpretProfile(base());assert.equal(p.ageGroup,'30–44');assert.deepEqual(p.equipmentAndAssistance,['Walker']);assert.equal(p.existingInstructions,null);assert(!('diagnosis' in p));assert(!missingFollowups(base()).some(q=>q.id==='age'));assert(!missingFollowups(base()).some(q=>q.id==='clearance'));});
+test('reported severe discomfort pauses practice and age never changes prescribed dosage',()=>{
+ const p=base();p.answers.age='75+';p.answers.currentDiscomfort='Severe discomfort';
+ const plan=assemblePlan(p,{records:[record()]});
+ assert.equal(plan.safety.paused,true);assert.equal(plan.routine[0].canPractice,false);
+ assert.equal(plan.routine[0].dosage,record().dosage);
+ assert(plan.personalization.some(text=>text.includes('75+')));
+ assert.equal(interpretProfile(p).currentDiscomfort,'Severe discomfort');
+});
+test('unknown preferences do not become clearance',()=>{const p=base();p.followups.clearance='I’m not sure';assert.equal(draftEligible(p),false);const plan=assemblePlan(p,{records:[record()]});assert.equal(plan.routine[0].canPractice,false);assert.equal(plan.routine[0].dosage,'TEST clinician dosage');});
+test('no resource produces an immediate support plan, not exercises',()=>{const plan=assemblePlan(base());assert(plan.goals.length);assert(plan.preparation.length);assert(plan.questions.length);assert.equal(plan.routine.length,0);assert.equal(plan.pending.length,0);assert.match(plan.activityMessage,/No authorized/);assert.equal(plan.reminders.enabled,false);assert.equal(plan.schedule[1].time,'12 PM');});
+test('approved wording and dosage survive organizational regeneration',()=>{const r=record(),serialized=JSON.stringify(r);const first=assemblePlan(base(),{records:[r]});const p=base();p.followups.sessionLength='5 minutes';p.answers.ptGoals=['Return to an activity I enjoy'];const regenerated=assemblePlan(p,{records:first.routine});assert.equal(regenerated.routine[0].instructions,r.instructions);assert.equal(regenerated.routine[0].dosage,r.dosage);assert.equal(regenerated.routine[0].frequency,r.frequency);assert.equal(JSON.stringify(r),serialized);assert(regenerated.conflicts.some(c=>c.includes('preferred session length')));});
+test('unverified and unapproved activities never unlock',()=>{const r=record();r.approval={status:'pending'};let plan=assemblePlan(base(),{records:[r]});assert.equal(plan.routine.length,0);assert.equal(plan.pending[0].canPractice,false);r.source.verified=false;assert.equal(verifyRecord(r),false);assert.equal(assemblePlan(base(),{records:[r]}).pending.length,0);});
+test('symptom concerns pause recommendations and keep clinician text',()=>{const p=base();p.followups.concerns='Possible emergency symptoms';assert.equal(safetyState(p).urgent,true);assert.equal(draftEligible(p),false);const plan=assemblePlan(p,{records:[record()]});assert.equal(plan.routine[0].canPractice,false);assert.equal(plan.routine[0].instructions,record().instructions);});
+test('patient-entered plan is verbatim and not labeled verified approval',()=>{const p=base();p.answers.hasPlan='Yes';p.answers.instructions='Exact clinician text, as pasted.';const plan=assemblePlan(p);assert.equal(plan.instructions.text,p.answers.instructions);assert.match(plan.instructions.label,/Approval not verified/);assert.equal(plan.routine.length,0);});
+test('media requires explicit rights and verification, never a fabricated URL',()=>{const r=record();r.media=[{type:'video',url:'https://example.test/fixture',authorized:true,verified:true,authorizationReference:'TEST LICENSE'}];assert.equal(authorizedMedia(r).length,1);r.media[0].authorized=false;assert.equal(authorizedMedia(r).length,0);});
